@@ -40,6 +40,10 @@ public class EqualsPredicateEvaluatorFactory {
     return new DictionaryBasedEqualsPredicateEvaluator(predicate, dictionary);
   }
 
+  public static PredicateEvaluator newDictionaryBasedEvaluator(int matchingDictId) {
+    return new DictionaryBasedEqualsPredicateEvaluator(matchingDictId);
+  }
+
   /**
    * Returns a new instance of no-dictionary based equality predicate evaluator.
    * @param predicate Predicate to evaluate
@@ -250,34 +254,29 @@ public class EqualsPredicateEvaluatorFactory {
    *
    */
   private static final class DictionaryBasedEqualsPredicateEvaluator extends BasePredicateEvaluator {
-    private int[] _matchingIds;
-    private int _equalsMatchDictId;
-    private EqPredicate _predicate;
+    final int _matchingDictId;
 
-    public DictionaryBasedEqualsPredicateEvaluator(EqPredicate predicate, Dictionary dictionary) {
-      _predicate = predicate;
-      _equalsMatchDictId = dictionary.indexOf(predicate.getEqualsValue());
-      if (_equalsMatchDictId >= 0) {
-        _matchingIds = new int[1];
-        _matchingIds[0] = _equalsMatchDictId;
-      } else {
-        _matchingIds = new int[0];
-      }
+    DictionaryBasedEqualsPredicateEvaluator(EqPredicate predicate, Dictionary dictionary) {
+      _matchingDictId = dictionary.indexOf(predicate.getEqualsValue());
+    }
+
+    DictionaryBasedEqualsPredicateEvaluator(int matchingDictId) {
+      _matchingDictId = matchingDictId;
     }
 
     @Override
     public boolean apply(int dictionaryId) {
-      return (dictionaryId == _equalsMatchDictId);
+      return dictionaryId == _matchingDictId;
     }
 
     @Override
-    public boolean apply(int[] dictionaryIds) {
-      if (_equalsMatchDictId < 0) {
+    public boolean apply(int[] dictionaryIds, int length) {
+      if (_matchingDictId < 0) {
         return false;
       }
-      // we cannot do binary search since the multi-value columns are not sorted in the raw segment
-      for (int dictId : dictionaryIds) {
-        if (dictId == _equalsMatchDictId) {
+      for (int i = 0; i < length; i++) {
+        int dictId = dictionaryIds[i];
+        if (dictId == _matchingDictId) {
           return true;
         }
       }
@@ -286,29 +285,16 @@ public class EqualsPredicateEvaluatorFactory {
 
     @Override
     public int[] getMatchingDictionaryIds() {
-      return _matchingIds;
-    }
-
-    @Override
-    public int[] getNonMatchingDictionaryIds() {
-      throw new UnsupportedOperationException(
-          "Returning non matching values is expensive for predicateType:" + _predicate.getType());
-    }
-
-    @Override
-    public boolean apply(int[] dictionaryIds, int length) {
-      for (int i = 0; i < length; i++) {
-        int dictId = dictionaryIds[i];
-        if (dictId == _equalsMatchDictId) {
-          return true;
-        }
+      if (_matchingDictId >= 0) {
+        return new int[]{_matchingDictId};
+      } else {
+        return new int[0];
       }
-      return false;
     }
 
     @Override
     public boolean alwaysFalse() {
-      return _equalsMatchDictId < 0;
+      return _matchingDictId < 0;
     }
   }
 }

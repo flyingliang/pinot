@@ -27,7 +27,7 @@ public abstract class BasePredicateEvaluator implements PredicateEvaluator {
 
   @Override
   public boolean apply(int[] dictionaryIds) {
-    throw new UnsupportedOperationException(EXCEPTION_MESSAGE);
+    return apply(dictionaryIds, dictionaryIds.length);
   }
 
   @Override

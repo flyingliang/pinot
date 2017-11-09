@@ -15,10 +15,12 @@
  */
 package com.linkedin.pinot.core.operator.filter.predicate;
 
-import java.util.regex.Pattern;
-
 import com.linkedin.pinot.core.common.predicate.RegexpLikePredicate;
 import com.linkedin.pinot.core.segment.index.readers.Dictionary;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.ints.IntList;
+import java.util.regex.Pattern;
+
 
 public class RegexpLikePredicateEvaluatorFactory {
 
@@ -75,10 +77,22 @@ public class RegexpLikePredicateEvaluatorFactory {
     }
 
     @Override
+    public int[] getMatchingDictionaryIds() {
+      IntList matchingDictIds = new IntArrayList();
+      int length = dictionary.length();
+      for (int i = 0; i < length; i++) {
+        String value = dictionary.getStringValue(i);
+        if (pattern.matcher(value).find()) {
+          matchingDictIds.add(i);
+        }
+      }
+      return matchingDictIds.toIntArray();
+    }
+
+    @Override
     public boolean alwaysFalse() {
       return false;
     }
-
   }
 
   private static class NoDictionaryBasedRegexPredicateEvaluator extends BasePredicateEvaluator {

@@ -31,37 +31,31 @@ import com.linkedin.pinot.core.operator.filter.predicate.PredicateEvaluatorProvi
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 
 public class SortedInvertedIndexBasedFilterOperator extends BaseFilterOperator {
-
-  private static final Logger LOGGER = LoggerFactory.getLogger(SortedInvertedIndexBasedFilterOperator.class);
   private static final String OPERATOR_NAME = "SortedInvertedIndexBasedFilterOperator";
 
-  private final Predicate predicate;
-  private PredicateEvaluator predicateEvaluator;
-  private DataSource dataSource;
+  private final PredicateEvaluator _predicateEvaluator;
+  private final DataSource _dataSource;
+  private final int _startDocId;
+  // Inclusive
+  private final int _endDocId;
+  private final boolean _exclusive;
 
-  private SortedBlock sortedBlock;
+  public SortedInvertedIndexBasedFilterOperator(Predicate predicate, DataSource dataSource, int startDocId,
+      int endDocId) {
+    this(PredicateEvaluatorProvider.getPredicateFunctionFor(predicate, dataSource), dataSource, startDocId, endDocId,
+        predicate.getType().isExclusive());
+  }
 
-  private int startDocId;
-
-  private int endDocId;
-
-  /**
-   *
-   * @param dataSource
-   * @param startDocId inclusive
-   * @param endDocId inclusive
-   */
-  public SortedInvertedIndexBasedFilterOperator(Predicate predicate, DataSource dataSource, int startDocId, int endDocId) {
-    this.predicate = predicate;
-    this.predicateEvaluator = PredicateEvaluatorProvider.getPredicateFunctionFor(predicate, dataSource);
-    this.dataSource = dataSource;
-    this.startDocId = startDocId;
-    this.endDocId = endDocId;
+  public SortedInvertedIndexBasedFilterOperator(PredicateEvaluator predicateEvaluator, DataSource dataSource,
+      int startDocId, int endDocId, boolean exclusive) {
+    _predicateEvaluator = predicateEvaluator;
+    _dataSource = dataSource;
+    _startDocId = startDocId;
+    _endDocId = endDocId;
+    _exclusive = exclusive;
   }
 
   @Override
@@ -71,7 +65,7 @@ public class SortedInvertedIndexBasedFilterOperator extends BaseFilterOperator {
 
   @Override
   public BaseFilterBlock nextFilterBlock(BlockId BlockId) {
-    SortedIndexReader invertedIndex = (SortedIndexReader) dataSource.getInvertedIndex();
+    SortedIndexReader invertedIndex = (SortedIndexReader) _dataSource.getInvertedIndex();
     List<IntPair> pairs = new ArrayList<>();
 
     // At this point, we need to create a list of matching docId ranges. There are two kinds of operators:
@@ -88,24 +82,11 @@ public class SortedInvertedIndexBasedFilterOperator extends BaseFilterOperator {
     // range predicate relative to the cardinality. However, as adjacent ranges get merged before returning the final
     // list of ranges, the only drawback is that we use a lot of memory during the filter block evaluation.
 
-    final int[] dictionaryIds;
-    boolean additiveRanges = true;
-
-    switch (predicate.getType()) {
-      case EQ:
-      case IN:
-      case RANGE:
-        dictionaryIds = predicateEvaluator.getMatchingDictionaryIds();
-        break;
-      case NEQ:
-      case NOT_IN:
-        additiveRanges = false;
-        dictionaryIds = predicateEvaluator.getNonMatchingDictionaryIds();
-        break;
-      case REGEXP_LIKE:
-        throw new RuntimeException("Regex is not supported");
-      default:
-        throw new RuntimeException("Unimplemented!");
+    int[] dictionaryIds;
+    if (_exclusive) {
+      dictionaryIds = _predicateEvaluator.getNonMatchingDictionaryIds();
+    } else {
+      dictionaryIds = _predicateEvaluator.getMatchingDictionaryIds();
     }
 
     if (0 < dictionaryIds.length) {
@@ -114,11 +95,11 @@ public class SortedInvertedIndexBasedFilterOperator extends BaseFilterOperator {
       Arrays.sort(dictionaryIds);
 
       IntPair lastPair = invertedIndex.getDocIds(dictionaryIds[0]);
-      IntRanges.clip(lastPair, startDocId, endDocId);
+      IntRanges.clip(lastPair, _startDocId, _endDocId);
 
       for (int i = 1; i < dictionaryIds.length; i++) {
         IntPair currentPair = invertedIndex.getDocIds(dictionaryIds[i]);
-        IntRanges.clip(currentPair, startDocId, endDocId);
+        IntRanges.clip(currentPair, _startDocId, _endDocId);
 
         // If the previous range is degenerate, just keep the current one
         if (IntRanges.isInvalid(lastPair)) {
@@ -144,7 +125,7 @@ public class SortedInvertedIndexBasedFilterOperator extends BaseFilterOperator {
       }
     }
 
-    if (!additiveRanges) {
+    if (_exclusive) {
       // If the ranges are not additive ranges, our list of pairs is a list of "holes" in the [startDocId; endDocId]
       // range. We need to take this list of pairs and invert it. To do so, there are three cases:
       //
@@ -153,11 +134,11 @@ public class SortedInvertedIndexBasedFilterOperator extends BaseFilterOperator {
       //   [lastHoleEndDocId + 1; endDocId] and ranges in between other holes
       List<IntPair> newPairs = new ArrayList<>();
       if (pairs.isEmpty()) {
-        newPairs.add(new IntPair(startDocId, endDocId));
+        newPairs.add(new IntPair(_startDocId, _endDocId));
       } else {
         // Add the first filled area (between startDocId and the first hole)
         IntPair firstHole = pairs.get(0);
-        IntPair firstRange = new IntPair(startDocId, firstHole.getLeft() - 1);
+        IntPair firstRange = new IntPair(_startDocId, firstHole.getLeft() - 1);
 
         if (!IntRanges.isInvalid(firstRange)) {
           newPairs.add(firstRange);
@@ -176,7 +157,7 @@ public class SortedInvertedIndexBasedFilterOperator extends BaseFilterOperator {
 
         // Add the last filled area (between the last hole and endDocId)
         IntPair lastHole = pairs.get(pairs.size() - 1);
-        IntPair lastRange = new IntPair(lastHole.getRight() + 1, endDocId);
+        IntPair lastRange = new IntPair(lastHole.getRight() + 1, _endDocId);
 
         if (!IntRanges.isInvalid(lastRange)) {
           newPairs.add(lastRange);
@@ -186,14 +167,12 @@ public class SortedInvertedIndexBasedFilterOperator extends BaseFilterOperator {
       pairs = newPairs;
     }
 
-    LOGGER.debug("Creating a Sorted Block with pairs: {}", pairs);
-    sortedBlock = new SortedBlock(dataSource.getOperatorName(), pairs);
-    return sortedBlock;
+    return new SortedBlock(_dataSource.getOperatorName(), pairs);
   }
 
   @Override
   public boolean isResultEmpty() {
-    return predicateEvaluator.alwaysFalse();
+    return _predicateEvaluator.alwaysFalse();
   }
 
   @Override
@@ -247,6 +226,5 @@ public class SortedInvertedIndexBasedFilterOperator extends BaseFilterOperator {
     public BlockMetadata getMetadata() {
       throw new UnsupportedOperationException("getMetadata not supported in " + this.getClass());
     }
-
   }
 }

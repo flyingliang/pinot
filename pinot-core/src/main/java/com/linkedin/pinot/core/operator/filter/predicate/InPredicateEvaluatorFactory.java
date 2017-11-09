@@ -52,6 +52,10 @@ public class InPredicateEvaluatorFactory extends BasePredicateEvaluator {
     return new DictionaryBasedInPredicateEvaluator(predicate, dictionary);
   }
 
+  public static PredicateEvaluator newDictionaryBasedEvaluator(IntSet matchingDictIds) {
+    return new DictionaryBasedInPredicateEvaluator(matchingDictIds);
+  }
+
   /**
    * Returns a new instance of no-dictionary based IN predicate evaluator.
    * @param predicate Predicate to evaluate
@@ -85,38 +89,34 @@ public class InPredicateEvaluatorFactory extends BasePredicateEvaluator {
    * Dictionary based implementation for IN predicate evaluator.
    */
   private static final class DictionaryBasedInPredicateEvaluator extends BasePredicateEvaluator {
-    private int[] _matchingIds;
-    private IntSet _dictIdSet;
-    private InPredicate _predicate;
+    final IntSet _matchingDictIdSet;
+    int[] _matchingDictIds;
 
-    public DictionaryBasedInPredicateEvaluator(InPredicate predicate, Dictionary dictionary) {
-
-      _predicate = predicate;
-      _dictIdSet = new IntOpenHashSet();
-      final String[] inValues = predicate.getInRange();
-      for (final String value : inValues) {
-        final int index = dictionary.indexOf(value);
+    DictionaryBasedInPredicateEvaluator(InPredicate predicate, Dictionary dictionary) {
+      _matchingDictIdSet = new IntOpenHashSet();
+      String[] inValues = predicate.getInRange();
+      for (String value : inValues) {
+        int index = dictionary.indexOf(value);
         if (index >= 0) {
-          _dictIdSet.add(index);
+          _matchingDictIdSet.add(index);
         }
       }
-      _matchingIds = new int[_dictIdSet.size()];
-      int i = 0;
-      for (int dictId : _dictIdSet) {
-        _matchingIds[i++] = dictId;
-      }
-      Arrays.sort(_matchingIds);
+    }
+
+    DictionaryBasedInPredicateEvaluator(IntSet matchingDictIdSet) {
+      _matchingDictIdSet = matchingDictIdSet;
     }
 
     @Override
     public boolean apply(int dictionaryId) {
-      return _dictIdSet.contains(dictionaryId);
+      return _matchingDictIdSet.contains(dictionaryId);
     }
 
     @Override
-    public boolean apply(int[] dictionaryIds) {
-      for (int dictId : dictionaryIds) {
-        if (_dictIdSet.contains(dictId)) {
+    public boolean apply(int[] dictionaryIds, int length) {
+      for (int i = 0; i < length; i++) {
+        int dictId = dictionaryIds[i];
+        if (_matchingDictIdSet.contains(dictId)) {
           return true;
         }
       }
@@ -125,29 +125,16 @@ public class InPredicateEvaluatorFactory extends BasePredicateEvaluator {
 
     @Override
     public int[] getMatchingDictionaryIds() {
-      return _matchingIds;
-    }
-
-    @Override
-    public int[] getNonMatchingDictionaryIds() {
-      throw new UnsupportedOperationException(
-          "Returning non matching values is expensive for predicateType:" + _predicate.getType());
-    }
-
-    @Override
-    public boolean apply(int[] dictionaryIds, int length) {
-      for (int i = 0; i < length; i++) {
-        int dictId = dictionaryIds[i];
-        if (_dictIdSet.contains(dictId)) {
-          return true;
-        }
+      if (_matchingDictIds == null) {
+        _matchingDictIds = _matchingDictIdSet.toIntArray();
+        Arrays.sort(_matchingDictIds);
       }
-      return false;
+      return _matchingDictIds;
     }
 
     @Override
     public boolean alwaysFalse() {
-      return _matchingIds == null || _matchingIds.length == 0;
+      return _matchingDictIdSet.isEmpty();
     }
   }
 

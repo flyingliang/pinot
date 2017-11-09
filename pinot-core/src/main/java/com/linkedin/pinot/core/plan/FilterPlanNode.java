@@ -33,7 +33,7 @@ import com.linkedin.pinot.core.operator.filter.MatchEntireSegmentOperator;
 import com.linkedin.pinot.core.operator.filter.OrOperator;
 import com.linkedin.pinot.core.operator.filter.ScanBasedFilterOperator;
 import com.linkedin.pinot.core.operator.filter.SortedInvertedIndexBasedFilterOperator;
-import com.linkedin.pinot.core.operator.filter.StarTreeIndexOperator;
+import com.linkedin.pinot.core.operator.filter.StarTreeIndexBasedFilterOperator;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -62,12 +62,11 @@ public class FilterPlanNode implements PlanNode {
   public Operator run() {
     long start = System.currentTimeMillis();
     Operator operator;
-    FilterQueryTree filterQueryTree = RequestUtils.generateFilterQueryTree(_brokerRequest);
-    if (_segment.getSegmentMetadata().hasStarTree()
-        && RequestUtils.isFitForStarTreeIndex(_segment.getSegmentMetadata(), filterQueryTree, _brokerRequest)) {
-      operator = new StarTreeIndexOperator(_segment, _brokerRequest);
+    FilterQueryTree rootFilterNode = RequestUtils.generateFilterQueryTree(_brokerRequest);
+    if (RequestUtils.isFitForStarTreeIndex(_segment.getSegmentMetadata(), _brokerRequest, rootFilterNode)) {
+      operator = new StarTreeIndexBasedFilterOperator(_segment, _brokerRequest, rootFilterNode);
     } else {
-      operator = constructPhysicalOperator(filterQueryTree, _segment, _optimizeAlwaysFalse);
+      operator = constructPhysicalOperator(rootFilterNode, _segment, _optimizeAlwaysFalse);
     }
     long end = System.currentTimeMillis();
     LOGGER.debug("FilterPlanNode.run took:{}", (end - start));

@@ -15,7 +15,6 @@
  */
 package com.linkedin.pinot.core.operator.filter;
 
-import com.linkedin.pinot.core.common.Block;
 import com.linkedin.pinot.core.common.BlockId;
 import com.linkedin.pinot.core.common.DataSource;
 import com.linkedin.pinot.core.common.Predicate;
@@ -35,28 +34,34 @@ public class BitmapBasedFilterOperator extends BaseFilterOperator {
   private static final Logger LOGGER = LoggerFactory.getLogger(BitmapBasedFilterOperator.class);
   private static final String OPERATOR_NAME = "BitmapBasedFilterOperator";
 
-  private final PredicateEvaluator predicateEvaluator;
-  private final Predicate predicate;
+  private final int _startDocId;
+  // Inclusive
+  private final int _endDocId;
+  private final boolean _exclusive;
 
-  private DataSource dataSource;
-  private BitmapBlock bitmapBlock;
+  private PredicateEvaluator _predicateEvaluator;
+  private DataSource _dataSource;
+  private ImmutableRoaringBitmap[] _bitmaps;
 
-  private int startDocId;
-
-  private int endDocId;
-
-  /**
-   * @param predicate
-   * @param dataSource
-   * @param startDocId inclusive
-   * @param endDocId inclusive
-   */
   public BitmapBasedFilterOperator(Predicate predicate, DataSource dataSource, int startDocId, int endDocId) {
-    this.predicate = predicate;
-    this.predicateEvaluator = PredicateEvaluatorProvider.getPredicateFunctionFor(predicate, dataSource);
-    this.dataSource = dataSource;
-    this.startDocId = startDocId;
-    this.endDocId = endDocId;
+    this(PredicateEvaluatorProvider.getPredicateFunctionFor(predicate, dataSource), dataSource, startDocId, endDocId,
+        predicate.getType().isExclusive());
+  }
+
+  public BitmapBasedFilterOperator(PredicateEvaluator predicateEvaluator, DataSource dataSource, int startDocId,
+      int endDocId, boolean exclusive) {
+    _predicateEvaluator = predicateEvaluator;
+    _dataSource = dataSource;
+    _startDocId = startDocId;
+    _endDocId = endDocId;
+    _exclusive = exclusive;
+  }
+
+  public BitmapBasedFilterOperator(ImmutableRoaringBitmap[] bitmaps, int startDocId, int endDocId, boolean exclusive) {
+    _bitmaps = bitmaps;
+    _startDocId = startDocId;
+    _endDocId = endDocId;
+    _exclusive = exclusive;
   }
 
   @Override
@@ -66,25 +71,16 @@ public class BitmapBasedFilterOperator extends BaseFilterOperator {
 
   @Override
   public BaseFilterBlock nextFilterBlock(BlockId BlockId) {
-    InvertedIndexReader invertedIndex = dataSource.getInvertedIndex();
-    Block dataSourceBlock = dataSource.nextBlock();
-    int[] dictionaryIds;
-    boolean exclusion = false;
-    switch (predicate.getType()) {
-      case EQ:
-      case IN:
-      case RANGE:
-        dictionaryIds = predicateEvaluator.getMatchingDictionaryIds();
-        break;
+    if (_bitmaps != null) {
+      return new BitmapBlock(_bitmaps, _startDocId, _endDocId, _exclusive);
+    }
 
-      case NEQ:
-      case NOT_IN:
-        exclusion = true;
-        dictionaryIds = predicateEvaluator.getNonMatchingDictionaryIds();
-        break;
-      case REGEXP_LIKE:
-      default:
-        throw new UnsupportedOperationException("Regex is not supported");
+    InvertedIndexReader invertedIndex = _dataSource.getInvertedIndex();
+    int[] dictionaryIds;
+    if (_exclusive) {
+      dictionaryIds = _predicateEvaluator.getNonMatchingDictionaryIds();
+    } else {
+      dictionaryIds = _predicateEvaluator.getMatchingDictionaryIds();
     }
 
     // For realtime use case, it is possible that inverted index has not yet generated for the given dict id, so we
@@ -104,14 +100,12 @@ public class BitmapBasedFilterOperator extends BaseFilterOperator {
       LOGGER.info("Not all inverted indexes are generated, numDictIds: {}, numBitmaps: {}", length, numBitmaps);
     }
 
-    bitmapBlock = new BitmapBlock(dataSource.getOperatorName(), dataSourceBlock.getMetadata(), startDocId, endDocId,
-        bitmaps.toArray(new ImmutableRoaringBitmap[numBitmaps]), exclusion);
-    return bitmapBlock;
+    return new BitmapBlock(bitmaps.toArray(new ImmutableRoaringBitmap[numBitmaps]), _startDocId, _endDocId, _exclusive);
   }
 
   @Override
   public boolean isResultEmpty() {
-    return predicateEvaluator.alwaysFalse();
+    return _predicateEvaluator != null && _predicateEvaluator.alwaysFalse();
   }
 
   @Override

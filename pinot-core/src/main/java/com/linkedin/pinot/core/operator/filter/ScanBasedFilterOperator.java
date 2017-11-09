@@ -29,73 +29,63 @@ import com.linkedin.pinot.core.operator.docidsets.ScanBasedMultiValueDocIdSet;
 import com.linkedin.pinot.core.operator.docidsets.ScanBasedSingleValueDocIdSet;
 import com.linkedin.pinot.core.operator.filter.predicate.PredicateEvaluator;
 import com.linkedin.pinot.core.operator.filter.predicate.PredicateEvaluatorProvider;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 
 public class ScanBasedFilterOperator extends BaseFilterOperator {
-  private static final Logger LOGGER = LoggerFactory.getLogger(ScanBasedFilterOperator.class);
   private static final String OPERATOR_NAME = "ScanBasedFilterOperator";
 
-  private final PredicateEvaluator predicateEvaluator;
-  private DataSource dataSource;
-  private Integer startDocId;
-  private Integer endDocId;
-  private String name;
+  private final PredicateEvaluator _predicateEvaluator;
+  private final DataSource _dataSource;
+  private final int _startDocId;
+  // Inclusive
+  private final int _endDocId;
 
-  /**
-   * @param predicate
-   * @param dataSource
-   * @param startDocId inclusive
-   * @param endDocId inclusive
-   */
-  public ScanBasedFilterOperator(Predicate predicate, DataSource dataSource, Integer startDocId, Integer endDocId) {
-    this.predicateEvaluator = PredicateEvaluatorProvider.getPredicateFunctionFor(predicate, dataSource);
-    this.dataSource = dataSource;
-    this.startDocId = startDocId;
-    this.endDocId = endDocId;
-    this.name = ScanBasedFilterOperator.class.getName() + "[" + dataSource.getOperatorName() + "]";
+  public ScanBasedFilterOperator(Predicate predicate, DataSource dataSource, int startDocId, int endDocId) {
+    this(PredicateEvaluatorProvider.getPredicateFunctionFor(predicate, dataSource), dataSource, startDocId, endDocId);
+  }
+
+  public ScanBasedFilterOperator(PredicateEvaluator predicateEvaluator, DataSource dataSource, int startDocId,
+      int endDocId) {
+    _predicateEvaluator = predicateEvaluator;
+    _dataSource = dataSource;
+    _startDocId = startDocId;
+    _endDocId = endDocId;
   }
 
   @Override
   public boolean open() {
-    dataSource.open();
+    _dataSource.open();
     return true;
   }
 
   @Override
   public BaseFilterBlock nextFilterBlock(BlockId BlockId) {
-    DataSourceMetadata dataSourceMetadata = dataSource.getDataSourceMetadata();
+    DataSourceMetadata dataSourceMetadata = _dataSource.getDataSourceMetadata();
     FilterBlockDocIdSet docIdSet;
-    Block nextBlock = dataSource.nextBlock();
+    Block nextBlock = _dataSource.nextBlock();
     BlockValSet blockValueSet = nextBlock.getBlockValueSet();
     BlockMetadata blockMetadata = nextBlock.getMetadata();
     if (dataSourceMetadata.isSingleValue()) {
-      docIdSet = new ScanBasedSingleValueDocIdSet(dataSource.getOperatorName(), blockValueSet, blockMetadata,
-          predicateEvaluator);
+      docIdSet = new ScanBasedSingleValueDocIdSet(_dataSource.getOperatorName(), blockValueSet, blockMetadata,
+          _predicateEvaluator);
     } else {
-      docIdSet = new ScanBasedMultiValueDocIdSet(dataSource.getOperatorName(), blockValueSet, blockMetadata,
-          predicateEvaluator);
+      docIdSet = new ScanBasedMultiValueDocIdSet(_dataSource.getOperatorName(), blockValueSet, blockMetadata,
+          _predicateEvaluator);
     }
 
-    if (startDocId != null) {
-      docIdSet.setStartDocId(startDocId);
-    }
-
-    if (endDocId != null) {
-      docIdSet.setEndDocId(endDocId);
-    }
+    docIdSet.setStartDocId(_startDocId);
+    docIdSet.setEndDocId(_endDocId);
     return new ScanBlock(docIdSet);
   }
 
   @Override
   public boolean isResultEmpty() {
-    return predicateEvaluator.alwaysFalse();
+    return _predicateEvaluator.alwaysFalse();
   }
 
   @Override
   public boolean close() {
-    dataSource.close();
+    _dataSource.close();
     return true;
   }
 
@@ -141,11 +131,5 @@ public class ScanBasedFilterOperator extends BaseFilterOperator {
     public FilterBlockDocIdSet getFilteredBlockDocIdSet() {
       return docIdSet;
     }
-
-  }
-
-  @Override
-  public String toString() {
-    return ScanBasedFilterOperator.class.getName() + "-" + name;
   }
 }
