@@ -19,14 +19,17 @@ import com.linkedin.pinot.common.segment.SegmentMetadata;
 import com.linkedin.pinot.core.common.Block;
 import com.linkedin.pinot.core.common.BlockId;
 import com.linkedin.pinot.core.common.Operator;
-import com.linkedin.pinot.core.operator.BaseOperator;
 import com.linkedin.pinot.core.operator.ExecutionStatistics;
 import com.linkedin.pinot.core.operator.blocks.IntermediateResultsBlock;
 import com.linkedin.pinot.core.query.aggregation.AggregationFunctionContext;
 import com.linkedin.pinot.core.query.aggregation.AggregationResultHolder;
 import com.linkedin.pinot.core.query.aggregation.DoubleAggregationResultHolder;
+import com.linkedin.pinot.core.query.aggregation.ObjectAggregationResultHolder;
 import com.linkedin.pinot.core.query.aggregation.function.AggregationFunction;
 import com.linkedin.pinot.core.query.aggregation.function.AggregationFunctionFactory;
+import com.linkedin.pinot.core.query.aggregation.function.customobject.MinMaxRangePair;
+import com.linkedin.pinot.core.segment.index.readers.Dictionary;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -37,7 +40,7 @@ import java.util.Map;
  */
 public class MetadataBasedAggregationOperator implements Operator {
   private final AggregationFunctionContext[] _aggregationFunctionContexts;
-  private final Map<String, BaseOperator> _dataSourceMap;
+  private final Map<String, Dictionary> _dictionaryMap;
   private final SegmentMetadata _segmentMetadata;
   private ExecutionStatistics _executionStatistics;
 
@@ -46,23 +49,17 @@ public class MetadataBasedAggregationOperator implements Operator {
    *
    * @param aggregationFunctionContexts Aggregation function contexts.
    * @param segmentMetadata Segment metadata.
-   * @param dataSourceMap Map of column to its data source.
+   * @param dictionaryMap Map of column to its dictionary.
    */
   public MetadataBasedAggregationOperator(AggregationFunctionContext[] aggregationFunctionContexts,
-      SegmentMetadata segmentMetadata, Map<String, BaseOperator> dataSourceMap) {
+      SegmentMetadata segmentMetadata, Map<String, Dictionary> dictionaryMap) {
     _aggregationFunctionContexts = aggregationFunctionContexts;
-
-    // Datasource is currently not used, but will start getting used as we add support for aggregation
-    // functions other than count(*).
-    _dataSourceMap = dataSourceMap;
+    _dictionaryMap = dictionaryMap;
     _segmentMetadata = segmentMetadata;
   }
 
   @Override
   public boolean open() {
-    for (BaseOperator operator : _dataSourceMap.values()) {
-      operator.open();
-    }
     return true;
   }
 
@@ -76,14 +73,25 @@ public class MetadataBasedAggregationOperator implements Operator {
       AggregationFunction function = aggregationFunctionContext.getAggregationFunction();
       AggregationFunctionFactory.AggregationFunctionType functionType =
           AggregationFunctionFactory.AggregationFunctionType.valueOf(function.getName().toUpperCase());
-
-      // TODO: Add support for more aggregation functions that can be served with metadata.
+      String column = aggregationFunctionContext.getAggregationColumns()[0];
+      Dictionary dictionary = _dictionaryMap.get(column);
       AggregationResultHolder resultHolder;
       switch (functionType) {
         case COUNT:
           resultHolder = new DoubleAggregationResultHolder(totalRawDocs);
           break;
-
+        case MAX:
+          resultHolder = new DoubleAggregationResultHolder(dictionary.getDoubleValue(dictionary.length() - 1));
+          break;
+        case MIN:
+          resultHolder = new DoubleAggregationResultHolder(dictionary.getDoubleValue(0));
+          break;
+        case MINMAXRANGE:
+          double max = dictionary.getDoubleValue(dictionary.length() - 1);
+          double min = dictionary.getDoubleValue(0);
+          resultHolder = new ObjectAggregationResultHolder();
+          resultHolder.setValue(new MinMaxRangePair(min, max));
+          break;
         default:
           throw new UnsupportedOperationException(
               "Metadata based aggregation operator does not support function " + function.getName());
@@ -107,9 +115,6 @@ public class MetadataBasedAggregationOperator implements Operator {
 
   @Override
   public boolean close() {
-    for (BaseOperator operator : _dataSourceMap.values()) {
-      operator.close();
-    }
     return true;
   }
 
